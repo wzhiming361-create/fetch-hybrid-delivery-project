@@ -1,156 +1,61 @@
+---
+layout: default
+title: Fetch Hybrid Delivery System
+description: A ROS 1 and ROS 2 Mixed Architecture for Mobile Manipulation
+theme: jekyll-theme-cayman
+---
+
 # Fetch Hybrid Delivery System
+**A ROS 1 and ROS 2 Mixed Architecture for Mobile Manipulation**
 
-这是一个基于 **Fetch Mobile Manipulator** 的混合架构移动抓取与递送系统。
+> [cite_start]**Authors:** Li Yanhao, Xu Jingwei, Wang Zhiming [cite: 3]
+> [cite_start]**Date:** January 11, 2026 [cite: 4]
+> [cite_start]**Institution:** Department of Computer Science [cite: 1]
 
-## 项目架构
+---
 
-本项目采用了 **ROS 1 + ROS 2 混合架构**，以在保留 Fetch 机器人稳定驱动（ROS 1 Melodic）的同时，利用 ROS 2 的先进特性进行视觉感知。
+## 1. Abstract
+[cite_start]As the robotics software ecosystem transitions towards ROS 2, legacy hardware platforms like the Fetch Mobile Manipulator often remain dependent on stable, older drivers (ROS 1)[cite: 6]. [cite_start]To leverage modern computer vision algorithms available in ROS 2 while maintaining reliable hardware control, this project implements a **Fetch Hybrid Delivery System**[cite: 7]. [cite_start]The system utilizes a distributed architecture where the Host machine runs ROS 1 Melodic for motion planning and navigation, while a Docker container runs ROS 2 Foxy for point-cloud perception[cite: 8]. [cite_start]A `ros1_bridge` is deployed to facilitate real-time, cross-version data communication[cite: 9]. [cite_start]Experimental results demonstrate successful object detection, 6D pose estimation, and data bridging[cite: 10].
 
-* **宿主机 (ROS 1 Melodic)**: 运行硬件驱动、MoveIt! 运动规划、MoveBase 导航以及主控逻辑 (`fetch_controller.py`)。
-* **Docker 容器 (ROS 2 Foxy)**: 运行基于 PCL 的视觉感知节点 (`fetch_perception`) 以及 `ros1_bridge`。
-* **通信**: 容器与宿主机共享网络，通过 `ros1_bridge` 将 ROS 2 的感知结果 (`/box_target`) 转发给 ROS 1 控制器。
+---
 
-## 目录结构
+## 2. System Architecture
 
-```text
-hybrid_fetch_project/
-├── docker/                           # Docker 环境配置
-│   ├── bridge_mapping.yaml           # 跨版本消息映射规则
-│   ├── docker-compose.yml            # 容器启动配置
-│   ├── Dockerfile                    # ROS 1 Noetic + ROS 2 Foxy 镜像构建
-│   └── entrypoint.sh                 # 环境加载脚本
-├── ros1_ws/                          # [宿主机] ROS 1 工作空间
-│   └── src/
-│       ├── fetch-delivery-system/    # 主系统 (已修改适配混合架构)
-│       └── grasping/                 # 独立的测试与演示脚本
-└── ros2_ws/                          # [Docker] ROS 2 工作空间
-    └── src/
-        ├── fetch_delivery_system_msgs/ # 消息定义 (用于桥接)
-        └── fetch_perception/           # 核心感知节点
-```
-## 环境要求
+### 2.1 Overview
+[cite_start]The architecture is divided into two distinct environments sharing a network namespace[cite: 24]:
 
-* **硬件**: Fetch Mobile Manipulator (或安装了 `fetch_gazebo` 的仿真电脑)。
-* **操作系统**: Ubuntu 18.04 (宿主机)。
-* **软件**:
-    * ROS Melodic (宿主机)
-    * Docker & Docker Compose
+* **Host System (ROS 1 Melodic):** Acts as the somatic control center. It handles hardware drivers, the MoveIt! [cite_start]Motion Planning Framework, the MoveBase Navigation Stack, and the main logic controller (`fetch_controller.py`) [cite: 25-29].
+* **Docker Container (ROS 2 Foxy):** Acts as the cognitive center. [cite_start]It handles RGB-D data processing, Point Cloud Library (PCL) segmentation algorithms, and the `ros1_bridge` for message translation [cite: 30-32].
 
-## 安装与部署
+### 2.2 Communication Pipeline
+The system relies on the `ros1_bridge` dynamic bridge. [cite_start]The data flow is defined as follows [cite: 34-39]:
 
-### 1. 宿主机 (ROS 1) 准备
+1.  **Sensing:** The robot's head camera publishes images to ROS 1.
+2.  **Bridging (Forward):** The data from the sensor (ROS 1) is published and bridged to the perception node (ROS 2).
+3.  **Processing:** The ROS 2 node inside Docker processes the data and calculates the target object's pose.
+4.  **Bridging (Backward):** The calculated pose is published to `/box_pose` (ROS 2) and bridged back to `/box_pose` (ROS 1).
+5.  **Actuation:** The ROS 1 controller listens to the topic, transforms the coordinates to the `base_link` frame, and executes the grasp.
 
-将 `ros1_ws` 中的代码部署到机器人或仿真电脑上。
+---
 
-```bash
-# 假设你在项目根目录下
-cd ros1_ws
+## 3. Implementation Details
 
-# 编译 ROS 1 工作空间
-catkin_make
+### 3.1 ROS 2 Perception Node
+The perception module (`fetch_perception`) ingests raw point cloud data. [cite_start]It applies a RANSAC algorithm to identify the table plane and remove it[cite: 58]. The remaining points are clustered using Euclidean Clustering to isolate the target object. [cite_start]A bounding box is generated, and its centroid is published as a `geometry_msgs/PoseStamped` [cite: 59-60].
 
-# 使得环境生效
-source devel/setup.bash
-```
+![Perception Log](./images/perception_log.jpg)
+[cite_start]*Figure 1: ROS 2 Perception Log showing successful object detection and pose publishing[cite: 87].*
 
-重要配置: 修改地图路径 打开 `ros1_ws/src/fetch-delivery-system/scripts/fetch_navigation.py`，找到 map_file 变量，将其修改为你机器上的绝对路径：
+### 3.2 The Bridge Configuration
+[cite_start]To ensure seamless communication, we utilized the `dynamic_bridge` with a specific parameter mapping for key topics[cite: 89].
 
-```Python3
-# 示例
-map_file = "/home/fetch/hybrid_fetch_project/ros1_ws/src/fetch-delivery-system/fetch_maps/fetch_traditional_maps.yaml"
-```
-
-### 2. Docker 环境 (ROS 2) 准备
-
-构建包含 ROS 2 和 Bridge 的 Docker 镜像。
+The startup command used in the container is:
 
 ```bash
-cd ../docker
-
-# 构建并启动容器 (后台运行)
-docker-compose up -d --build
-```
-
-### 3. 编译 ROS 2 代码
-
-我们需要进入容器内部编译感知节点。
-
-```bash
-# 进入容器
-docker exec -it fetch_hybrid_bridge bash
-
-# --- 以下命令在容器内执行 ---
-cd /root/ros2_ws
-
-# 编译 (使用 symlink 安装以便开发)
-colcon build --symlink-install
-
-# 退出容器
-exit
-```
-
-## 运行
-
-请按照以下顺序在不同的终端 (Terminal) 中启动系统。
-
-第一步：启动 ROS 1 基础系统 (宿主机)
-
-在宿主机终端中
-
-```bash
-cd ros1_ws
-source devel/setup.bash
-
-# 启动 MoveIt, 导航配置 (已禁用了旧版感知节点)
-roslaunch fetch_delivery_system grasping.launch
-```
-
-第二步：启动 ROS 2 感知节点 (Docker)
-
-打开一个新的终端：
-
-```bash
-docker exec -it fetch_hybrid_bridge bash
-
-# --- 容器内 ---
-# 启动感知节点
-ros2 launch fetch_perception perception.launch.py
-```
-
-第三步：启动 ROS 1 Bridge (Docker)
-
-打开一个新的终端：
-```bash
-docker exec -it fetch_hybrid_bridge bash
-
-# --- 容器内 ---
-# 启动桥接，加载映射规则
-# bash -lc "source /opt/ros/noetic/setup.bash && source /opt/ros/foxy/setup.bash && ros2 run ros1_bridge parameter_bridge /root/bridge_mapping.yaml"
-
-# ros2 run ros1_bridge parameter_bridge /root/bridge_mapping.yaml
-
-# bash -lc "source /opt/ros/noetic/setup.bash && source /opt/ros/foxy/setup.bash && ros2 run ros1_bridge dynamic_bridge"
-
+# Inside Docker Container
 source /opt/ros/noetic/setup.bash
 source /opt/ros/foxy/setup.bash
+
 ros2 run ros1_bridge dynamic_bridge --bridge-all-topics \
   -m geometry_msgs/PoseStamped \
   -m visualization_msgs/Marker
-```
-
-第四步：启动主控制器 (宿主机)
-
-打开一个新的终端：
-```bash
-cd ros1_ws
-source devel/setup.bash
-
-# 启动导航逻辑 (确保地图路径已修改)
-rosrun fetch_delivery_system fetch_navigation.py &
-
-# 启动抓取与递送逻辑
-# 注意：不要使用第三方包 fetch_api 来运行控制器。
-# 如果脚本或环境依赖于 `fetch_api`，请改用 `fetch_ros` 提供的 ROS 接口，
-# 或在真实机器人（有 fetch 驱动）或安装了 `fetch_gazebo` 的仿真环境中运行。
-rosrun fetch_delivery_system fetch_controller.py
-```
